@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""
+scanner.py — Day 1: TCP port scanner
+Raw-socket implementation + python-nmap wrapper (service/version detection).
+
+LEGAL: Only scan systems you own or have written permission to test.
+"""
+
+import socket
+import sys
+
+try:
+    import nmap
+    NMAP_AVAILABLE = True
+except ImportError:
+    NMAP_AVAILABLE = False
+
+
+def scan_port(target: str, port: int, timeout: float = 1.0) -> bool:
+    """Attempt a TCP connect to target:port. Return True if open."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            return sock.connect_ex((target, port)) == 0
+    except socket.error as e:
+        print(f"[!] Socket error on port {port}: {e}")
+        return False
+
+
+def raw_socket_scan(target: str, start_port: int = 1, end_port: int = 1024,
+                     timeout: float = 1.0) -> list[int]:
+    """Scan a port range with raw sockets, no third-party libs. Returns open ports."""
+    open_ports = []
+    try:
+        socket.gethostbyname(target)  # fail fast if host doesn't resolve
+    except socket.gaierror:
+        print(f"[!] Could not resolve target: {target}")
+        return open_ports
+
+    for port in range(start_port, end_port + 1):
+        if scan_port(target, port, timeout):
+            print(f"[+] Port {port} open")
+            open_ports.append(port)
+    return open_ports
+
+
+def nmap_scan(target: str, port_range: str = "1-1024") -> dict:
+    """Scan with python-nmap using -sV. Returns {port: {service, product, version}}."""
+    if not NMAP_AVAILABLE:
+        print("[!] python-nmap not installed. Run: pip install python-nmap")
+        return {}
+
+    results = {}
+    try:
+        scanner = nmap.PortScanner()
+        scanner.scan(target, port_range, arguments="-sV")
+        if target not in scanner.all_hosts():
+            print(f"[!] Host {target} did not respond")
+            return results
+        for proto in scanner[target].all_protocols():
+            for port, info in scanner[target][proto].items():
+                if info["state"] == "open":
+                    results[port] = {
+                        "service": info.get("name", "unknown"),
+                        "product": info.get("product", ""),
+                        "version": info.get("version", ""),
+                    }
+                    print(f"[+] {port}/{proto} open — "
+                          f"{info.get('product','')} {info.get('version','')}")
+    except nmap.PortScannerError as e:
+        print(f"[!] Nmap error: {e}")
+    except Exception as e:
+        print(f"[!] Unexpected error: {e}")
+    return results
+
+
+def grab_banner(target: str, port: int, timeout: float = 2.0) -> str:
+    """
+    Connect to target:port and read whatever banner the service sends.
+    Falls back to a minimal HTTP probe for ports that don't greet first (e.g. 80).
+    Returns the banner text, or '' if nothing was received/connect failed.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect((target, port))
+            try:
+                banner = sock.recv(1024)
+            except socket.timeout:
+                banner = b""
+
+            if not banner:
+                # service didn't greet on connect (typical for HTTP) — probe it
+                try:
+                    sock.sendall(b"HEAD / HTTP/1.0\r\n\r\n")
+                    banner = sock.recv(1024)
+                except (socket.timeout, socket.error):
+                    banner = b""
+
+            return banner.decode(errors="ignore").strip()
+    except socket.timeout:
+        return ""
+    except ConnectionRefusedError:
+        return ""
+    except socket.error as e:
+        print(f"[!] Banner grab error on port {port}: {e}")
+        return ""
+
+
+def banner_scan(target: str, ports: list[int] = (21, 22, 80), timeout: float = 2.0) -> dict[int, str]:
+    """Grab banners from a list of ports. Returns {port: banner_text}."""
+    banners = {}
+    for port in ports:
+        banner = grab_banner(target, port, timeout)
+        if banner:
+            first_line = banner.splitlines()[0] if banner else ""
+            print(f"[+] Port {port} banner: {first_line}")
+            banners[port] = banner
+        else:
+            print(f"[-] Port {port}: no banner / closed")
+    return banners
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python scanner.py <target_ip>")
+        sys.exit(1)
+
+    target = sys.argv[1]
+
+    print(f"[*] Raw socket scan of {target} (ports 1-1024)")
+    raw_socket_scan(target)
+
+    if NMAP_AVAILABLE:
+        print(f"\n[*] Nmap -sV scan of {target}")
+        nmap_scan(target)
+
+    print(f"\n[*] Banner grab on {target} (ports 21, 22, 80)")
+    banner_scan(target)
