@@ -121,6 +121,39 @@ def banner_scan(target: str, ports: list[int] = (21, 22, 80), timeout: float = 2
     return banners
 
 
+def os_detect(target: str) -> dict:
+    """
+    OS fingerprint via Nmap -O. Requires root/sudo — Nmap needs raw socket
+    access for OS detection. Returns {} with a printed reason on failure.
+    """
+    if not NMAP_AVAILABLE:
+        print("[!] python-nmap not installed. Run: pip install python-nmap")
+        return {}
+
+    try:
+        scanner = nmap.PortScanner()
+        scanner.scan(target, arguments="-O")
+        if target not in scanner.all_hosts():
+            print(f"[!] Host {target} did not respond to OS scan")
+            return {}
+
+        osmatches = scanner[target].get("osmatch", [])
+        if not osmatches:
+            print("[-] No OS match found (target may be filtering probes)")
+            return {}
+
+        best = osmatches[0]
+        print(f"[+] OS guess: {best['name']} ({best['accuracy']}% confidence)")
+        return {"name": best["name"], "accuracy": best["accuracy"]}
+
+    except nmap.PortScannerError as e:
+        print(f"[!] Nmap error (try running with sudo): {e}")
+        return {}
+    except Exception as e:
+        print(f"[!] Unexpected OS detection error: {e}")
+        return {}
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python scanner.py <target_ip>")
@@ -136,4 +169,17 @@ if __name__ == "__main__":
         nmap_scan(target)
 
     print(f"\n[*] Banner grab on {target} (ports 21, 22, 80)")
-    banner_scan(target)
+    banners = banner_scan(target)
+
+    print(f"\n[*] OS detection on {target} (requires sudo)")
+    os_detect(target)
+
+    # Day 3: wire each banner straight into an NVD lookup, color-coded by risk
+    try:
+        from cve_lookup import banner_to_cves, print_cves
+        for port, banner in banners.items():
+            print(f"\n[*] CVE lookup for port {port} banner")
+            cves = banner_to_cves(banner)
+            print_cves(cves, port=port)
+    except ImportError:
+        print("[!] cve_lookup.py not found in this directory — skipping CVE lookup")

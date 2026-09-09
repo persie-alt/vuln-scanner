@@ -12,8 +12,37 @@ Set it as an env var so it never lands in your repo:
 import os
 import time
 import requests
+from colorama import Fore, Style, init as colorama_init
+
+colorama_init(autoreset=True)
 
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+
+
+def risk_color(cvss) -> str:
+    """Map a CVSS score to a colorama color. None/unknown -> white."""
+    if cvss is None:
+        return Fore.WHITE
+    if cvss >= 7.0:
+        return Fore.RED
+    if cvss >= 4.0:
+        return Fore.YELLOW
+    return Fore.GREEN
+
+
+def print_cves(cves: list[dict], port: int = None) -> None:
+    """Print a list of CVE dicts (from query_cve) with color-coded severity."""
+    label = f" for port {port}" if port is not None else ""
+    if not cves:
+        print(f"[-] No CVEs found{label}")
+        return
+
+    for c in cves:
+        color = risk_color(c["cvss"])
+        score = c["cvss"] if c["cvss"] is not None else "N/A"
+        sev = c["severity"] or "UNKNOWN"
+        print(f"{color}[{sev}] {c['id']}  CVSS {score}{Style.RESET_ALL}{label}")
+        print(f"    {c['description']}")
 
 
 def query_cve(keyword: str, max_results: int = 10, timeout: float = 10.0) -> list[dict]:
@@ -100,13 +129,6 @@ if __name__ == "__main__":
     keyword = " ".join(sys.argv[1:])
     print(f"[*] Querying NVD for: {keyword}")
     cves = query_cve(keyword)
-
-    if not cves:
-        print("[-] No CVEs found")
-    for c in cves:
-        sev = c["severity"] or "N/A"
-        score = c["cvss"] if c["cvss"] is not None else "N/A"
-        print(f"[+] {c['id']}  CVSS {score} ({sev})")
-        print(f"    {c['description']}")
+    print_cves(cves)
 
     time.sleep(1)  # be polite to the API between manual runs
