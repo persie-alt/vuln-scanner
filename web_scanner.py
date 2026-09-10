@@ -11,6 +11,7 @@ LEGAL: Only scan web apps you own or have written permission to test.
 import socket
 import ssl
 from datetime import datetime, timezone
+from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
 import requests
 
@@ -112,6 +113,92 @@ def dir_bruteforce(base_url: str, wordlist_path: str, timeout: float = 3.0, max_
     return found
 
 
+SQLI_PAYLOADS = ["'", "' OR 1=1 --"]
+SQLI_ERROR_SIGNATURES = [
+    "sql syntax", "mysql_fetch", "syntax error", "unclosed quotation",
+    "sqlstate", "odbc sql", "pg_query", "warning: mysql",
+]
+
+
+def sqli_scan(url: str, timeout: float = 5.0) -> list:
+    """
+    Inject SQLi payloads into each query parameter of url.
+    Flags a param if the response shows a DB error signature, or its length
+    changes drastically vs a clean baseline request. Returns a list of findings.
+    """
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+    if not params:
+        print(f"[-] No query parameters found in {url} — nothing to test")
+        return []
+
+    try:
+        baseline = requests.get(url, timeout=timeout)
+        baseline_len = len(baseline.text)
+    except requests.exceptions.RequestException as e:
+        print(f"[!] Baseline request failed: {e}")
+        return []
+
+    findings = []
+    for param in params:
+        for payload in SQLI_PAYLOADS:
+            test_params = {k: v[0] for k, v in params.items()}
+            test_params[param] = payload
+            test_url = urlunparse(parsed._replace(query=urlencode(test_params)))
+            try:
+                resp = requests.get(test_url, timeout=timeout)
+            except requests.exceptions.RequestException:
+                continue
+
+            body_lower = resp.text.lower()
+            error_hit = next((sig for sig in SQLI_ERROR_SIGNATURES if sig in body_lower), None)
+            length_diff = abs(len(resp.text) - baseline_len)
+
+            if error_hit:
+                print(f"[!] Possible SQLi on '{param}' — DB error signature: '{error_hit}'")
+                findings.append({"param": param, "payload": payload, "reason": f"error signature: {error_hit}"})
+            elif baseline_len and length_diff > baseline_len * 0.5:
+                print(f"[!] Possible SQLi on '{param}' — response length changed significantly")
+                findings.append({"param": param, "payload": payload, "reason": "response length changed"})
+
+    if not findings:
+        print(f"[-] No SQLi indicators found on {url}")
+    return findings
+
+
+XSS_PAYLOAD = "<script>alert(1)</script>"
+
+
+def xss_scan(url: str, timeout: float = 5.0) -> list:
+    """
+    Inject a reflected XSS payload into each query parameter.
+    Flags a param if the payload appears unescaped in the response body.
+    """
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+    if not params:
+        print(f"[-] No query parameters found in {url} — nothing to test")
+        return []
+
+    findings = []
+    for param in params:
+        test_params = {k: v[0] for k, v in params.items()}
+        test_params[param] = XSS_PAYLOAD
+        test_url = urlunparse(parsed._replace(query=urlencode(test_params)))
+        try:
+            resp = requests.get(test_url, timeout=timeout)
+        except requests.exceptions.RequestException:
+            continue
+
+        if XSS_PAYLOAD in resp.text:
+            print(f"[!] Reflected XSS on '{param}' — payload appears unescaped")
+            findings.append({"param": param, "payload": XSS_PAYLOAD})
+
+    if not findings:
+        print("[-] No reflected XSS found")
+    return findings
+
+
 if __name__ == "__main__":
     import sys
     from urllib.parse import urlparse
@@ -132,3 +219,13 @@ if __name__ == "__main__":
     wordlist = "/usr/share/wordlists/dirb/common.txt"
     print(f"\n[*] Directory brute-force on {url} (wordlist: {wordlist})")
     dir_bruteforce(url, wordlist)
+
+    if parse_qs(urlparse(url).query):
+        print(f"\n[*] SQLi probing on {url}")
+        sqli_scan(url)
+
+        print(f"\n[*] Reflected XSS probing on {url}")
+        xss_scan(url)
+    else:
+        print("\n[-] URL has no query parameters — skipping SQLi/XSS probes "
+              "(pass a URL like http://host/page?id=1)")
