@@ -1,3 +1,4 @@
 python-nmap
 requests
 colorama
+flask
