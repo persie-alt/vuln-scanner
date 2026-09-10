@@ -1,0 +1,16 @@
+Manual AttackBox run — no internet available this session (git/pip/NVD unreachable)
+Target: 10.128.135.212
+Executed via: scanner.py (pasted directly, bypassing git clone)
+
+[*] Raw socket scan of 10.128.135.212 (ports 1-1024)
+[+] Port 21 open
+[+] Port 22 open
+[+] Port 80 open
+
+[*] Banner grab on 10.128.135.212 (ports 21, 22, 80)
+[+] Port 21 banner: 220 (vsFTPd 3.0.5)
+[+] Port 22 banner: SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.11
+[+] Port 80 banner: HTTP/1.1 405 Method Not Allowed
+
+[*] OS detection: skipped — python-nmap not installed (no internet to pip install)
+[*] CVE lookup: skipped — no internet to reach NVD
