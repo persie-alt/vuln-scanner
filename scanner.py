@@ -8,6 +8,7 @@ LEGAL: Only scan systems you own or have written permission to test.
 
 import socket
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     import nmap
@@ -42,6 +43,34 @@ def raw_socket_scan(target: str, start_port: int = 1, end_port: int = 1024,
             print(f"[+] Port {port} open")
             open_ports.append(port)
     return open_ports
+
+
+def threaded_port_scan(target: str, start_port: int = 1, end_port: int = 1024,
+                        timeout: float = 1.0, max_workers: int = 50) -> list[int]:
+    """
+    Multi-threaded version of raw_socket_scan — same logic, run concurrently.
+    max_workers caps how many ports are checked in parallel at once.
+    """
+    open_ports = []
+    try:
+        socket.gethostbyname(target)
+    except socket.gaierror:
+        print(f"[!] Could not resolve target: {target}")
+        return open_ports
+
+    ports = range(start_port, end_port + 1)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_port = {executor.submit(scan_port, target, port, timeout): port for port in ports}
+        for future in as_completed(future_to_port):
+            port = future_to_port[future]
+            try:
+                if future.result():
+                    print(f"[+] Port {port} open")
+                    open_ports.append(port)
+            except Exception as e:
+                print(f"[!] Error scanning port {port}: {e}")
+
+    return sorted(open_ports)
 
 
 def nmap_scan(target: str, port_range: str = "1-1024") -> dict:
