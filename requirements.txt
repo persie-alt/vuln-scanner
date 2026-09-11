@@ -2,3 +2,4 @@ python-nmap
 requests
 colorama
 flask
+gunicorn
