@@ -52,7 +52,7 @@ FORM_HTML = """
         </select>
         <button type="submit">Scan</button>
     </form>
-    <p class="legal">⚠ Demo restricted to explicitly authorized targets. A scan can take a minute or two.</p>
+    <p class="legal">⚠ Demo restricted to explicitly authorized targets, common ports (1-500) for a fast response. A scan can take up to a minute.</p>
 </body>
 </html>
 """
@@ -103,7 +103,7 @@ def scan():
     if target not in ALLOWED_TARGETS:
         return "Target not in the authorized demo list.", 403
 
-    results = run_scan(target)
+    results = run_scan(target, port_range="1-500")
 
     rows = []
     for port in results.get("open_ports", []):
