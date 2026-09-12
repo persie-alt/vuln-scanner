@@ -10,6 +10,7 @@ LEGAL: Only scan web apps you own or have written permission to test.
 
 import socket
 import ssl
+import re
 from datetime import datetime, timezone
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
@@ -21,6 +22,118 @@ SECURITY_HEADERS = [
     "X-Frame-Options",
     "X-Content-Type-Options",
 ]
+
+SERVER_SIGNATURES = [
+    (r"nginx[/\s]?([\d.]+)?", "Nginx"),
+    (r"apache[/\s]?([\d.]+)?", "Apache"),
+    (r"openresty[/\s]?([\d.]+)?", "OpenResty"),
+    (r"microsoft-iis[/\s]?([\d.]+)?", "IIS"),
+    (r"litespeed", "LiteSpeed"),
+    (r"cloudflare", "Cloudflare"),
+    (r"gunicorn[/\s]?([\d.]+)?", "Gunicorn/Python"),
+    (r"werkzeug[/\s]?([\d.]+)?", "Flask/Python"),
+    (r"express", "Express/Node"),
+    (r"php[/\s]?([\d.]+)?", "PHP"),
+    (r"tomcat[/\s]?([\d.]+)?", "Tomcat/Java"),
+    (r"jetty[/\s]?([\d.]+)?", "Jetty/Java"),
+]
+
+LEAK_HEADERS = [
+    "Server", "X-Powered-By", "X-Generator", "X-AspNet-Version",
+    "X-AspNetMvc-Version", "Via", "X-Backend-Server", "X-Runtime",
+    "X-Served-By", "X-Drupal-Cache", "X-Varnish",
+]
+
+
+def _match_signatures(text: str) -> list:
+    text_lower = text.lower()
+    found = []
+    for pattern, label in SERVER_SIGNATURES:
+        m = re.search(pattern, text_lower)
+        if m:
+            version = m.group(1) if m.lastindex and m.group(1) else ""
+            found.append(f"{label} {version}".strip())
+    return found
+
+
+def fingerprint(url: str, timeout: float = 6.0) -> dict:
+    """
+    Multi-technique HTTP fingerprinting to identify silent servers.
+    Technique 1: Leak headers (Server, X-Powered-By, X-Generator etc.)
+    Technique 2: 404 error page content
+    Technique 3: Invalid HTTP method response
+    Technique 4: Session cookie names
+    """
+    result = {"leak_headers": {}, "identified": [], "raw_clues": []}
+    parsed = urlparse(url)
+    host = parsed.hostname or url
+    resp = None
+
+    # Technique 1: leak headers + cookies
+    try:
+        resp = requests.get(url, timeout=timeout, allow_redirects=True)
+        for h in LEAK_HEADERS:
+            val = resp.headers.get(h)
+            if val:
+                result["leak_headers"][h] = val
+                print(f"[+] {h}: {val}")
+                result["identified"] += _match_signatures(val)
+        for cookie in resp.cookies:
+            name_lower = cookie.name.lower()
+            if "phpsessid" in name_lower:
+                result["identified"].append("PHP")
+                print(f"[+] PHP detected via cookie: {cookie.name}")
+            elif "jsessionid" in name_lower:
+                result["identified"].append("Java")
+                print(f"[+] Java detected via cookie: {cookie.name}")
+            elif "asp.net_sessionid" in name_lower:
+                result["identified"].append("ASP.NET")
+                print(f"[+] ASP.NET detected via cookie: {cookie.name}")
+    except requests.exceptions.RequestException as e:
+        print(f"[!] Fingerprint GET failed: {e}")
+
+    # Technique 2: 404 error page
+    try:
+        r404 = requests.get(
+            f"{parsed.scheme}://{host}/vuln-scanner-probe-xq7z9k",
+            timeout=timeout, allow_redirects=True
+        )
+        hits = _match_signatures(r404.text)
+        if hits:
+            result["identified"] += hits
+            print(f"[+] Error page reveals: {', '.join(hits)}")
+        result["raw_clues"].append(f"404 body: {len(r404.text)} bytes")
+    except requests.exceptions.RequestException:
+        pass
+
+    # Technique 3: invalid HTTP method
+    try:
+        rinv = requests.request("INVALID", url, timeout=timeout, allow_redirects=False)
+        hits = _match_signatures(rinv.text)
+        if hits:
+            result["identified"] += hits
+            print(f"[+] Invalid method response reveals: {', '.join(hits)}")
+        result["raw_clues"].append(f"Invalid method → HTTP {rinv.status_code}")
+    except requests.exceptions.RequestException:
+        pass
+
+    # Technique 4: HEAD vs GET header delta
+    try:
+        head = requests.head(url, timeout=timeout, allow_redirects=True)
+        extra = set(head.headers.keys()) - set(resp.headers.keys() if resp else [])
+        if extra:
+            result["raw_clues"].append(f"HEAD-only headers: {', '.join(extra)}")
+    except requests.exceptions.RequestException:
+        pass
+
+    result["identified"] = list(dict.fromkeys(result["identified"]))
+
+    if result["identified"]:
+        print(f"[+] Stack identified: {', '.join(result['identified'])}")
+    elif not result["leak_headers"]:
+        print("[-] Server suppressing all identification — "
+              "try WhatWeb for deeper analysis")
+    return result
 
 
 def check_headers(url: str, timeout: float = 5.0) -> dict:
@@ -210,7 +323,10 @@ if __name__ == "__main__":
     url = sys.argv[1]
     host = urlparse(url).hostname or url
 
-    print(f"[*] Checking headers for {url}")
+    print(f"[*] Fingerprinting {url}")
+    fingerprint(url)
+
+    print(f"\n[*] Checking security headers for {url}")
     check_headers(url)
 
     print(f"\n[*] Checking SSL/TLS for {host}")
