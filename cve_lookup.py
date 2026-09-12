@@ -110,13 +110,26 @@ def query_cve(keyword: str, max_results: int = 10, timeout: float = 10.0) -> lis
 
 def banner_to_cves(banner: str, max_results: int = 5) -> list[dict]:
     """
-    Convenience wrapper: take a raw banner string (e.g. '220 vsftpd 2.3.4 ready')
-    and use it directly as a keyword search. Strips common noise chars.
+    Extract a clean keyword from a banner and search NVD.
+    e.g. 'SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.13' -> 'OpenSSH 6.6.1'
     """
+    import re
     cleaned = banner.replace("\r", " ").replace("\n", " ").strip()
     if not cleaned:
         return []
-    return query_cve(cleaned, max_results=max_results)
+
+    # Try to extract 'product version' pattern from the banner
+    # e.g. OpenSSH_6.6.1p1 -> "OpenSSH 6.6.1"
+    match = re.search(r'([A-Za-z][A-Za-z0-9\-]+)[_/\s]v?(\d+\.\d+[\.\d]*)', cleaned)
+    if match:
+        product = match.group(1).replace("_", " ")
+        version = match.group(2)
+        keyword = f"{product} {version}"
+    else:
+        # Fall back to first 40 chars of cleaned banner
+        keyword = cleaned[:40]
+
+    return query_cve(keyword, max_results=max_results)
 
 
 if __name__ == "__main__":
