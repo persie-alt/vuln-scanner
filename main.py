@@ -104,9 +104,10 @@ if __name__ == "__main__":
     print(f"\n[+] JSON saved:  {json_path}")
     print(f"[+] HTML report: {html_path}")
 
-    if args.remediate:
-        from remediation import generate_remediation, save_remediation, print_summary
-        print(f"\n[*] Generating remediation scripts...")
-        rem = generate_remediation(results, args.target_os)
-        print_summary(rem)
-        save_remediation(rem, args.output)
+    # Remediation always runs automatically — no flag needed
+    from remediation import generate_remediation, save_remediation, print_summary
+    print(f"\n[*] Generating remediation scripts...")
+    rem = generate_remediation(results, args.target_os)
+    results["remediation"] = rem
+    print_summary(rem)
+    save_remediation(rem, args.output)

@@ -8,6 +8,7 @@ LEGAL: Only scan systems you own or have written permission to test.
 
 from flask import Flask, request, render_template_string
 from main import run_scan
+from remediation import generate_remediation
 from reporter import _severity_color
 
 app = Flask(__name__)
@@ -68,8 +69,27 @@ BASE_STYLE = """
   .os-badge{display:inline-block;background:#1c2128;border:1px solid #30363d;
             border-radius:5px;padding:4px 10px;font-size:12px;color:#8b949e;
             margin-bottom:4px}
-  .no-ports{color:#6e7681;font-size:14px;text-align:center;padding:20px 0}
-  .scanning-msg{text-align:center;padding:30px 0;color:#8b949e;font-size:14px}
+  .rem-card{background:#0d1f12;border:1px solid #238636;border-radius:10px;
+            margin:12px 16px;padding:16px}
+  .rem-title{font-size:13px;font-weight:600;color:#3fb950;margin-bottom:10px;
+             display:flex;align-items:center;gap:6px}
+  .rem-item{margin-bottom:12px;padding-bottom:12px;
+            border-bottom:1px solid #1a3a1e}
+  .rem-item:last-child{margin-bottom:0;padding-bottom:0;border-bottom:none}
+  .rem-sev{font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;
+           display:inline-block;margin-bottom:4px}
+  .rem-sev.crit{background:#3d000022;color:#ff7b72;border:1px solid #ff7b72}
+  .rem-sev.high{background:#3d1a0022;color:#ffa657;border:1px solid #ffa657}
+  .rem-sev.med{background:#2d220022;color:#e3b341;border:1px solid #e3b341}
+  .rem-action{font-size:13px;color:#e6edf3;margin:4px 0}
+  .rem-cmd{background:#0d1117;border:1px solid #30363d;border-radius:5px;
+           padding:8px 10px;font-family:monospace;font-size:11px;
+           color:#8b949e;margin-top:6px;word-break:break-all;
+           white-space:pre-wrap}
+  .rem-detail{font-size:11px;color:#6e7681;margin-top:4px}
+  .section-title{font-size:13px;font-weight:600;color:#8b949e;
+                 padding:0 16px;margin:16px 0 4px;
+                 text-transform:uppercase;letter-spacing:.05em}
 </style>
 """
 
@@ -176,6 +196,24 @@ RESULTS_HTML = """<!DOCTYPE html>
   </div>
   {% endfor %}
 
+  {% if rem_items %}
+  <div class="section-title">&#x1F527; Remediation Steps</div>
+  <div class="rem-card">
+    <div class="rem-title">&#x2705; What to fix — generated automatically from scan results</div>
+    {% for fix in rem_items %}
+    <div class="rem-item">
+      <span class="rem-sev {{ fix.css }}">{{ fix.severity }}</span>
+      {% if fix.cve_id %}<span style="font-size:11px;color:#6e7681;margin-left:6px">{{ fix.cve_id }}</span>{% endif %}
+      <div class="rem-action">{{ fix.action }}</div>
+      {% if fix.cmd %}
+      <div class="rem-cmd">{{ fix.cmd }}</div>
+      {% endif %}
+      <div class="rem-detail">{{ fix.detail }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   <a class="back-btn" href="/">&larr; New Scan</a>
   <p class="legal">&#9888; Only scan systems you own or have explicit written permission to test.</p>
 </body>
@@ -212,8 +250,43 @@ def scan():
     os_name = os_info.get("name", "Unknown")
     os_acc = f' ({os_info["accuracy"]}% confidence)' if "accuracy" in os_info else ""
 
+    # Auto-generate remediation
+    rem = generate_remediation(results)
+    sev_css = {"CRITICAL": "crit", "HIGH": "high", "MEDIUM": "med", "LOW": "low"}
+    rem_items = []
+    for fix in rem.get("cve_fixes", []):
+        cmd = fix.get("linux_cmd") or fix.get("windows_cmd", "")
+        rem_items.append({
+            "cve_id": fix.get("cve_id", ""),
+            "severity": fix.get("severity", "MEDIUM"),
+            "css": sev_css.get(fix.get("severity", "MEDIUM"), "med"),
+            "action": fix.get("action", ""),
+            "cmd": cmd[:200] if cmd else "",
+            "detail": fix.get("detail", ""),
+        })
+    # Add header/TLS remediations if present
+    if rem.get("headers_config"):
+        rem_items.append({
+            "cve_id": "",
+            "severity": "MEDIUM",
+            "css": "med",
+            "action": "Add missing security headers to your web server config",
+            "cmd": "# Add to nginx:\nadd_header X-Frame-Options SAMEORIGIN;\nadd_header X-Content-Type-Options nosniff;\nadd_header Content-Security-Policy \"default-src 'self'\";",
+            "detail": "Missing headers allow clickjacking, MIME-type attacks, and XSS.",
+        })
+    if rem.get("tls_config"):
+        rem_items.append({
+            "cve_id": "",
+            "severity": "HIGH",
+            "css": "high",
+            "action": "Disable TLS 1.0 and 1.1 — allow TLS 1.2+ only",
+            "cmd": "# nginx: ssl_protocols TLSv1.2 TLSv1.3;\n# apache: SSLProtocol all -SSLv2 -SSLv3 -TLSv1 -TLSv1.1",
+            "detail": "Outdated TLS versions are vulnerable to POODLE, BEAST, and CRIME attacks.",
+        })
+
     return render_template_string(
-        RESULTS_HTML, target=target, os_name=os_name, os_acc=os_acc, rows=rows
+        RESULTS_HTML, target=target, os_name=os_name,
+        os_acc=os_acc, rows=rows, rem_items=rem_items
     )
 
 
