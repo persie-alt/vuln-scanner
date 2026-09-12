@@ -21,7 +21,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 from scanner import threaded_port_scan, banner_scan, os_detect
-from cve_lookup import banner_to_cves
+from cve_lookup import banner_to_cves, cve_to_metasploit
 from reporter import save_json, generate_html
 
 
@@ -55,6 +55,7 @@ def run_scan(target: str, port_range: str = "1-1024", threads: int = 50) -> dict
     cve_results = {}
     for port, banner in results["banners"].items():
         cves = banner_to_cves(banner)
+        cves = cve_to_metasploit(cves)
         if cves:
             cve_results[port] = cves
     results["cves"] = cve_results

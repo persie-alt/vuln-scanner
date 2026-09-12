@@ -132,6 +132,91 @@ def banner_to_cves(banner: str, max_results: int = 5) -> list[dict]:
     return query_cve(keyword, max_results=max_results)
 
 
+# CVE → Metasploit module mapping
+# Source: well-known public Metasploit modules, manually curated
+# Add more as you encounter them in practice
+CVE_TO_MSF = {
+    "CVE-2011-2523": {
+        "module": "exploit/unix/ftp/vsftpd_234_backdoor",
+        "description": "vsftpd 2.3.4 backdoor — opens shell on port 6200",
+        "reliability": "Excellent",
+    },
+    "CVE-2004-2687": {
+        "module": "exploit/unix/misc/distcc_exec",
+        "description": "DistCC daemon command execution",
+        "reliability": "Excellent",
+    },
+    "CVE-2007-2447": {
+        "module": "exploit/multi/samba/usermap_script",
+        "description": "Samba username map script — remote code execution",
+        "reliability": "Excellent",
+    },
+    "CVE-2009-3103": {
+        "module": "exploit/windows/smb/ms09_050_smb2_negotiate_func_index",
+        "description": "MS09-050 SMBv2 negotiate — Windows BSOD/RCE",
+        "reliability": "Average",
+    },
+    "CVE-2017-0143": {
+        "module": "exploit/windows/smb/ms17_010_eternalblue",
+        "description": "EternalBlue SMBv1 — WannaCry vector, SYSTEM shell",
+        "reliability": "Average",
+    },
+    "CVE-2017-0144": {
+        "module": "exploit/windows/smb/ms17_010_eternalblue",
+        "description": "EternalBlue SMBv1 — WannaCry vector, SYSTEM shell",
+        "reliability": "Average",
+    },
+    "CVE-2014-6271": {
+        "module": "exploit/multi/http/apache_mod_cgi_bash_env_exec",
+        "description": "Shellshock — bash environment variable injection",
+        "reliability": "Excellent",
+    },
+    "CVE-2021-41773": {
+        "module": "exploit/multi/http/apache_normalize_path_rce",
+        "description": "Apache 2.4.49 path traversal + RCE",
+        "reliability": "Excellent",
+    },
+    "CVE-2021-42013": {
+        "module": "exploit/multi/http/apache_normalize_path_rce",
+        "description": "Apache 2.4.50 path traversal + RCE (bypass of 41773 fix)",
+        "reliability": "Excellent",
+    },
+    "CVE-2021-44228": {
+        "module": "exploit/multi/misc/log4shell_header_injection",
+        "description": "Log4Shell — Log4j JNDI injection, remote code execution",
+        "reliability": "Excellent",
+    },
+    "CVE-2019-0708": {
+        "module": "exploit/windows/rdp/cve_2019_0708_bluekeep_rce",
+        "description": "BlueKeep — RDP pre-auth RCE on Windows 7/2008",
+        "reliability": "Average",
+    },
+    "CVE-2016-0777": {
+        "module": "auxiliary/scanner/ssh/ssh_enumusers",
+        "description": "OpenSSH info leak — use for user enumeration first",
+        "reliability": "Normal",
+    },
+}
+
+
+def cve_to_metasploit(cves: list[dict]) -> list[dict]:
+    """
+    Takes a list of CVE dicts (from query_cve) and annotates each one
+    with its Metasploit module if a known mapping exists.
+    Returns the same list with a 'msf' key added where applicable.
+    """
+    for cve in cves:
+        cve_id = cve.get("id", "")
+        if cve_id in CVE_TO_MSF:
+            cve["msf"] = CVE_TO_MSF[cve_id]
+            msf = CVE_TO_MSF[cve_id]
+            print(f"{Fore.CYAN}[MSF] {cve_id} → {msf['module']}")
+            print(f"      {msf['description']} (reliability: {msf['reliability']})")
+        else:
+            cve["msf"] = None
+    return cves
+
+
 if __name__ == "__main__":
     import sys
 
@@ -143,5 +228,7 @@ if __name__ == "__main__":
     print(f"[*] Querying NVD for: {keyword}")
     cves = query_cve(keyword)
     print_cves(cves)
+    print(f"\n[*] Checking for Metasploit modules...")
+    cve_to_metasploit(cves)
 
-    time.sleep(1)  # be polite to the API between manual runs
+    time.sleep(1)
