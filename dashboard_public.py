@@ -1,58 +1,65 @@
 #!/usr/bin/env python3
 """
-dashboard_public.py — deployment-safe variant of the dashboard.
-Unlike dashboard.py, the target is a fixed dropdown of pre-authorized
-hosts, not free text — this is the version meant to be deployed publicly,
-so a stranger on the internet can't point it at an arbitrary third party.
+dashboard_public.py — public-facing vulnerability scanner dashboard.
+Accepts any authorized target with a confirmation checkbox.
 
 Run locally:   python3 dashboard_public.py
 Run in prod:   gunicorn dashboard_public:app
 
 LEGAL: Only scan systems you own or have written permission to test.
-This app intentionally restricts targets to pre-authorized hosts for that reason.
 """
 
 from flask import Flask, request, render_template_string
-
 from main import run_scan
 from reporter import _severity_color
 
 app = Flask(__name__)
-
-# Only add a host here if scanning it is explicitly authorized.
-# scanme.nmap.org is the Nmap Project's official public test target.
-ALLOWED_TARGETS = {
-    "scanme.nmap.org": "scanme.nmap.org — Nmap Project's official public test host",
-}
 
 FORM_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Vuln Scanner - Live Demo</title>
+<title>Vulnerability Scanner</title>
 <style>
-    body { font-family: Arial, sans-serif; max-width: 600px; margin: 4rem auto; background: #f7f7f7; color: #222; }
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 4rem auto; background: #f7f7f7; color: #222; padding: 0 1rem; }
     h1 { color: #333; }
-    select { width: 100%; padding: 10px; margin: 8px 0; box-sizing: border-box; }
-    button { padding: 10px 20px; background: #333; color: #fff; border: none; cursor: pointer; }
-    .legal { color: #888; font-size: 0.85em; margin-top: 2rem; }
-    .note { color: #555; font-size: 0.9em; }
+    input[type=text] { width: 100%; padding: 10px; margin: 8px 0; box-sizing: border-box; font-size: 14px; }
+    .auth-box { background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 12px; margin: 10px 0; }
+    .auth-box label { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; cursor: pointer; }
+    .auth-box input[type=checkbox] { margin-top: 2px; flex-shrink: 0; }
+    button { padding: 10px 20px; background: #333; color: #fff; border: none; cursor: pointer; margin-top: 8px; }
+    .legal { color: #888; font-size: 0.82em; margin-top: 2rem; }
+    .example { color: #555; font-size: 0.85em; margin: 4px 0 0 0; }
 </style>
 </head>
 <body>
-    <h1>Vulnerability Scanner — Live Demo</h1>
-    <p class="note">This public demo only scans pre-authorized test hosts. The full tool (any target you're authorized to test) is in the GitHub repo, run locally.</p>
-    <form method="POST" action="/scan">
-        <label>Target:</label>
-        <select name="target" required>
-            {% for host, desc in targets.items() %}
-            <option value="{{ host }}">{{ desc }}</option>
-            {% endfor %}
-        </select>
-        <button type="submit">Scan</button>
+    <h1>Vulnerability Scanner</h1>
+    <p>Enter any target you are authorized to scan. Source code on <a href="https://github.com/persie-alt/vuln-scanner" target="_blank">GitHub</a>.</p>
+    <form method="POST" action="/scan" onsubmit="return validate()">
+        <label><strong>Target (IP or hostname):</strong></label>
+        <input type="text" name="target" id="target" placeholder="e.g. scanme.nmap.org or 192.168.1.1" required>
+        <p class="example">Not sure? Use <strong>scanme.nmap.org</strong> — Nmap's official public test host, always authorized.</p>
+        <div class="auth-box">
+            <label>
+                <input type="checkbox" id="authCheck" name="authorized" value="yes" required>
+                I confirm I own this system or have explicit written authorization to scan it. Unauthorized scanning is illegal.
+            </label>
+        </div>
+        <button type="submit" id="scanBtn">Scan</button>
     </form>
-    <p class="legal">⚠ Demo restricted to explicitly authorized targets, common ports (1-500) for a fast response. A scan can take up to a minute.</p>
+    <p class="legal">⚠ Scans common ports (1-500). Results take up to 60 seconds.</p>
+    <script>
+    function validate() {
+        if (!document.getElementById('authCheck').checked) {
+            alert('You must confirm authorization before scanning.');
+            return false;
+        }
+        document.getElementById('scanBtn').disabled = true;
+        document.getElementById('scanBtn').textContent = 'Scanning...';
+        return true;
+    }
+    </script>
 </body>
 </html>
 """
@@ -86,7 +93,7 @@ RESULTS_HTML = """
         {% endif %}
     </table>
     <a class="back" href="/">&larr; New scan</a>
-    <p class="legal">⚠ Demo restricted to explicitly authorized targets.</p>
+    <p class="legal">⚠ Only scan systems you own or have explicit written permission to test.</p>
 </body>
 </html>
 """
@@ -94,14 +101,17 @@ RESULTS_HTML = """
 
 @app.route("/")
 def index():
-    return render_template_string(FORM_HTML, targets=ALLOWED_TARGETS)
+    return FORM_HTML
 
 
 @app.route("/scan", methods=["POST"])
 def scan():
     target = request.form.get("target", "").strip()
-    if target not in ALLOWED_TARGETS:
-        return "Target not in the authorized demo list.", 403
+    authorized = request.form.get("authorized", "")
+    if not target:
+        return "No target provided.", 400
+    if authorized != "yes":
+        return "Authorization confirmation required.", 403
 
     results = run_scan(target, port_range="1-500")
 
