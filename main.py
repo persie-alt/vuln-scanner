@@ -85,6 +85,8 @@ def parse_args():
     parser.add_argument("--output", default="output", help="Output directory for JSON/HTML reports")
     parser.add_argument("--web", default=None, help="URL to also run web app scanning against")
     parser.add_argument("--threads", type=int, default=50, help="Threads for port scanning (default: 50)")
+    parser.add_argument("--remediate", action="store_true", help="Generate remediation scripts after scan")
+    parser.add_argument("--target-os", default="linux", choices=["linux","windows"], help="Target OS for remediation scripts")
     return parser.parse_args()
 
 
@@ -101,3 +103,10 @@ if __name__ == "__main__":
 
     print(f"\n[+] JSON saved:  {json_path}")
     print(f"[+] HTML report: {html_path}")
+
+    if args.remediate:
+        from remediation import generate_remediation, save_remediation, print_summary
+        print(f"\n[*] Generating remediation scripts...")
+        rem = generate_remediation(results, args.target_os)
+        print_summary(rem)
+        save_remediation(rem, args.output)
